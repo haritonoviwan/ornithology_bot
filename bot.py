@@ -55,14 +55,14 @@ def make_bird_html_link(display_name: str) -> str:
         
         bird_info = TAXONOMY.get(latin_name)
         if bird_info and "ebird_code" in bird_info:
-            url = f"https://ebird.org/species/{bird_info['ebird_code']}"
+            url = f"https://ebird.org/species/{bird_info['ebird_code']}?siteLanguage=ru"
             return f'<a href="{url}">{ru_name}</a> ({latin_name})'
         return display_name
     else:
         latin_name = display_name.strip()
         bird_info = TAXONOMY.get(latin_name)
         if bird_info and "ebird_code" in bird_info:
-            url = f"https://ebird.org/species/{bird_info['ebird_code']}"
+            url = f"https://ebird.org/species/{bird_info['ebird_code']}?siteLanguage=ru"
             return f'<a href="{url}">{latin_name}</a>'
         return display_name
 
