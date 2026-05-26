@@ -5,7 +5,7 @@ import asyncio
 import re
 import aiohttp
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ContentType, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, ContentType, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LinkPreviewOptions
 from aiogram.filters import Command
 from pydub import AudioSegment
 import uvicorn
@@ -145,8 +145,7 @@ async def handle_photo(message: Message):
             line = f"{i+1}. {bird_html1} — {cands[0]['score']:.1%} или {bird_html2} — {cands[1]['score']:.1%}"
         response_text += line + "\n"
         
-    # Изменили parse_mode на HTML
-    await waiting_msg.edit_text(response_text, parse_mode="HTML")
+    await waiting_msg.edit_text(response_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
 
 async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Message, waiting_msg: Message):
     geo = get_user_geo(message.from_user.id)
@@ -203,7 +202,7 @@ async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Messag
         [InlineKeyboardButton(text="⏱️ Кто когда пел?", callback_data=f"audio_details:{cache_key}")]
     ])
 
-    await waiting_msg.edit_text(response_text, parse_mode="HTML", reply_markup=keyboard)
+    await waiting_msg.edit_text(response_text, parse_mode="HTML", reply_markup=keyboard,link_preview_options=LinkPreviewOptions(is_disabled=True))
 
 @dp.callback_query(F.data.startswith("audio_details:"))
 async def handle_audio_details(callback: CallbackQuery):
@@ -211,7 +210,7 @@ async def handle_audio_details(callback: CallbackQuery):
     detailed_text = AUDIO_CACHE.get(cache_key)
     
     if detailed_text:
-        await callback.message.edit_text(detailed_text, parse_mode="HTML")
+        await callback.message.edit_text(detailed_text, parse_mode="HTML",link_preview_options=LinkPreviewOptions(is_disabled=True))
     else:
         await callback.answer("⚠️ Данные таймлайна устарели или бот был перезапущен", show_alert=True)
 
