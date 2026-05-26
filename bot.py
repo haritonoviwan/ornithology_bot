@@ -4,7 +4,7 @@ import logging
 import asyncio
 import aiohttp
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, BufferedInputFile, ContentType
+from aiogram.types import Message, ContentType, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
 from pydub import AudioSegment
 import uvicorn
