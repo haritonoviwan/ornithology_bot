@@ -86,14 +86,18 @@ async def handle_photo(message: Message):
         return
 
     # Если нашли птиц, собираем красивый ответ
-    response_text = "📸 Замечены птицы:\n\n"
+    response_text = "📸 Заметил:\n"
     for i, pred in enumerate(predictions):
-        response_text += f"**Птица №{i+1}:**\n"
-        for j, cand in enumerate(pred['candidates']):
-            prefix = "• " if j == 0 else "или "
-            response_text += f"{prefix}{cand['name']} — {cand['score']:.1%}\n"
-        response_text += "\n"
-
+        cands = pred.get('candidates', [])
+        if not cands:
+            continue
+        if len(cands) == 1:
+            # Один уверенный кандидат
+            line = f"{i+1}. {cands[0]['name']} — {cands[0]['score']:.1%}"
+        else:
+            # Два сомнительных кандидата
+            line = f"{i+1}. {cands[0]['name']} — {cands[0]['score']:.1%} или {cands[1]['name']} — {cands[1]['score']:.1%}"
+        response_text += line + "\n"
     await waiting_msg.edit_text(response_text, parse_mode="Markdown")
 
 async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Message, waiting_msg: Message):
@@ -122,18 +126,27 @@ async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Messag
 
     detections = result.get('detections', [])
     if not detections:
-        await waiting_msg.edit_text("🎵 Голоса знакомых птиц на записи не обнаружены")
+        await waiting_msg.edit_text("😔 Голоса знакомых птиц на записи не обнаружены")
         return
 
-    response_text = "🎵 Результаты аудиоанализа:\n\n"
+    audio_summary = {}
     for det in detections:
-        response_text += f"• **{det['name']}** ({det['start']:.1f}s - {det['end']:.1f}s) — {det['confidence']:.1%}\n"
+        bird_name = det['name']
+        confidence = det['confidence']
+        if bird_name not in audio_summary or confidence > audio_summary[bird_name]:
+            audio_summary[bird_name] = confidence
+
+    # Сортируем по убыванию уверенности
+    sorted_birds = sorted(audio_summary.items(), key=lambda x: x[1], reverse=True)
+    response_text = "🎧 Услышал:\n"
+    for i, (bird_name, confidence) in enumerate(sorted_birds):
+        response_text += f"{i+1}. {bird_name} — {confidence:.1%}\n"
 
     await waiting_msg.edit_text(response_text, parse_mode="Markdown")
 
 @dp.message(F.voice | F.audio)
 async def handle_audio(message: Message):
-    waiting_msg = await message.answer("🎵 Слушаю аудиозапись...")
+    waiting_msg = await message.answer("🎵 Слушаю аудио...")
     
     audio_obj = message.voice if message.voice else message.audio
     file_info = await bot.get_file(audio_obj.file_id)
