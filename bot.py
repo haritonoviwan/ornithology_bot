@@ -17,6 +17,8 @@ USER_LOCATIONS = {
     347493302: {"lat": 55.71, "lng": 37.87},
 }
 
+AUDIO_CACHE = {}
+
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -208,7 +210,7 @@ async def handle_video(message: Message):
         with open(temp_audio_name, "rb") as f:
             mp3_bytes = f.read()
             
-        await waiting_msg.edit_text("🎵 Аудио успешно извлечено! Отправляю на распознавание голоса...")
+        await waiting_msg.edit_text("🎵 Аудио успешно извлечено! Распознаю голоса...")
         await process_audio_bytes(mp3_bytes, "track.mp3", message, waiting_msg)
         
     except Exception as e:
