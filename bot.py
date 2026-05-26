@@ -34,10 +34,10 @@ def get_user_geo(user_id: int):
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     await message.answer(
-        "👋 Привет! Я птичий бот-орнитолог.\n\n"
-        "📸 Отправь мне фото кормушки — я найду и распознаю птиц.\n"
-        "🎵 Отправь голосовое, аудио или видео — я определю птицу по пению.\n\n"
-        "📍 Чтобы точность была выше, отправь мне свою геопозицию (кнопка 'Поделиться локацией')."
+        "🕊️ Привет! Я бот-орнитолог\n\n"
+        "📸 Отправь мне фото - я найду и распознаю птиц\n"
+        "🎙️ Отправь голосовое, аудио или видео - я определю птиц по пению\n\n"
+        "🌍 Чтобы точность была выше, отправь мне свою геопозицию"
     )
 
 @dp.message(F.content_type == ContentType.LOCATION)
@@ -47,7 +47,7 @@ async def handle_location(message: Message):
     lng = message.location.longitude
     
     USER_LOCATIONS[user_id] = {"lat": lat, "lng": lng}
-    await message.answer(f"📍 Локация сохранена! Текущие координаты: {lat:.4f}, {lng:.4f}")
+    await message.answer(f"📍 Локация сохранена! Текущие координаты: {lat:.2f}, {lng:.2f}")
 
 @dp.message(F.photo)
 async def handle_photo(message: Message):
@@ -69,7 +69,7 @@ async def handle_photo(message: Message):
         try:
             async with session.post(f"{HF_URL}/classify", data=data, timeout=60) as resp:
                 if resp.status != 200:
-                    await waiting_msg.edit_text("❌ Ошибка сервера классификации птиц.")
+                    await waiting_msg.edit_text("❌ Ошибка сервера классификации птиц")
                     return
                 result = await resp.json()
         except Exception as e:
@@ -82,11 +82,11 @@ async def handle_photo(message: Message):
 
     predictions = result.get('predictions', [])
     if not predictions:
-        await waiting_msg.edit_text("🐦 Птиц на фото не обнаружено или я не смог их рассмотреть.")
+        await waiting_msg.edit_text("🤔 Птиц на фото не обнаружено или я не смог их рассмотреть.")
         return
 
     # Если нашли птиц, собираем красивый ответ
-    response_text = "📸 Результаты анализа фото:\n\n"
+    response_text = "📸 Замечены птицы:\n\n"
     for i, pred in enumerate(predictions):
         response_text += f"**Птица №{i+1}:**\n"
         for j, cand in enumerate(pred['candidates']):
@@ -109,7 +109,7 @@ async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Messag
         try:
             async with session.post(f"{HF_URL}/analyze-audio", data=data, timeout=60) as resp:
                 if resp.status != 200:
-                    await waiting_msg.edit_text("❌ Ошибка сервера при анализе звука.")
+                    await waiting_msg.edit_text("❌ Ошибка сервера при анализе звука")
                     return
                 result = await resp.json()
         except Exception as e:
@@ -117,12 +117,12 @@ async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Messag
             return
 
     if result.get('status') == 'loading':
-        await waiting_msg.edit_text("⏳ Акустические модели подгружаются. Повтори запрос через минуту.")
+        await waiting_msg.edit_text("⏳ Акустические модели подгружаются. Повтори запрос через минуту")
         return
 
     detections = result.get('detections', [])
     if not detections:
-        await waiting_msg.edit_text("🎵 Голоса знакомых птиц на записи не обнаружены.")
+        await waiting_msg.edit_text("🎵 Голоса знакомых птиц на записи не обнаружены")
         return
 
     response_text = "🎵 Результаты аудиоанализа:\n\n"
