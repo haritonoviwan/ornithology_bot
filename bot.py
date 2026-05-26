@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import asyncio
+import re
 import aiohttp
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ContentType, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -27,6 +28,48 @@ dp = Dispatcher()
 
 app = FastAPI()
 
+TAXONOMY_PATH = "taxonomy.json"
+TAXONOMY = {}
+
+if os.path.exists(TAXONOMY_PATH):
+    try:
+        with open(TAXONOMY_PATH, "r", encoding="utf-8") as f:
+            TAXONOMY = json.load(f)
+        logging.info(f"✅ Успешно загружено {len(TAXONOMY)} таксонов для генерации ссылок.")
+    except Exception as e:
+        logging.error(f"❌ Ошибка при чтении файла {TAXONOMY_PATH}: {e}")
+else:
+    logging.warning(f"⚠️ Файл {TAXONOMY_PATH} не найден рядом с bot.py. Ссылки генерироваться не будут.")
+
+def make_bird_html_link(display_name: str) -> str:
+    """
+    Парсит display_name и оборачивает нужную часть в HTML-ссылку на eBird,
+    если для этой птицы есть ebird_code.
+    """
+    # Ищем паттерн "Русское название (Latin name)"
+    match = re.match(r"(.+?)\s*\((.+?)\)", display_name)
+    
+    if match:
+        ru_name = match.group(1).strip()
+        latin_name = match.group(2).strip()
+        
+        bird_info = TAXONOMY.get(latin_name)
+        if bird_info and "ebird_code" in bird_info:
+            url = f"https://ebird.org/species/{bird_info['ebird_code']}"
+            # Ссылкой становится только русское название
+            return f'<a href="{url}">{ru_name}</a> ({latin_name})'
+        return display_name
+    else:
+        # Если скобок нет, значит пришла чистая латынь "Latin name"
+        latin_name = display_name.strip()
+        bird_info = TAXONOMY.get(latin_name)
+        if bird_info and "ebird_code" in bird_info:
+            url = f"https://ebird.org/species/{bird_info['ebird_code']}"
+            # Ссылкой становится вся латынь
+            return f'<a href="{url}">{latin_name}</a>'
+        return display_name
+# ----------------------------------------------
+
 @app.get("/")
 def read_root():
     return {"status": "bot_alive"}
@@ -40,7 +83,7 @@ async def cmd_start(message: Message):
     await message.answer(
         "🕊️ Привет! Я бот-орнитолог\n\n"
         "📸 Отправь мне фото - я найду и распознаю птиц\n"
-        "🎙️ Отправь голосовое, аудио или видео - я определю птиц по пению\n\n"
+        "🎶 Отправь голосовое, аудио или видео - я определю птиц по пению\n\n"
         "🌍 Чтобы точность была выше, отправь мне свою геопозицию"
     )
 
@@ -51,7 +94,7 @@ async def handle_location(message: Message):
     lng = message.location.longitude
     
     USER_LOCATIONS[user_id] = {"lat": lat, "lng": lng}
-    await message.answer(f"📍 Локация сохранена! Текущие координаты: {lat:.2f}, {lng:.2f}")
+    await message.answer(f"📍 Локация сохранена\n Текущие координаты: {lat:.2f}, {lng:.2f}")
 
 @dp.message(F.photo)
 async def handle_photo(message: Message):
@@ -63,7 +106,6 @@ async def handle_photo(message: Message):
     
     geo = get_user_geo(message.from_user.id)
     
-    # Отправляем на HF
     data = aiohttp.FormData()
     data.add_field('image', file_bytes.read(), filename='photo.jpg', content_type='image/jpeg')
     data.add_field('lat', str(geo['lat']))
@@ -86,26 +128,27 @@ async def handle_photo(message: Message):
 
     predictions = result.get('predictions', [])
     if not predictions:
-        await waiting_msg.edit_text("🤔 Птиц на фото не обнаружено или я не смог их рассмотреть.")
+        await waiting_msg.edit_text("🤔 Птиц на фото не обнаружено или я не смог их рассмотреть")
         return
 
-    # Если нашли птиц, собираем красивый ответ
     response_text = "📸 Заметил:\n"
     for i, pred in enumerate(predictions):
         cands = pred.get('candidates', [])
         if not cands:
             continue
         if len(cands) == 1:
-            # Один уверенный кандидат
-            line = f"{i+1}. {cands[0]['name']} - {cands[0]['score']:.1%}"
+            bird_html = make_bird_html_link(cands[0]['name'])
+            line = f"{i+1}. {bird_html} — {cands[0]['score']:.1%}"
         else:
-            # Два сомнительных кандидата
-            line = f"{i+1}. {cands[0]['name']} - {cands[0]['score']:.1%} или {cands[1]['name']} - {cands[1]['score']:.1%}"
+            bird_html1 = make_bird_html_link(cands[0]['name'])
+            bird_html2 = make_bird_html_link(cands[1]['name'])
+            line = f"{i+1}. {bird_html1} — {cands[0]['score']:.1%} или {bird_html2} — {cands[1]['score']:.1%}"
         response_text += line + "\n"
-    await waiting_msg.edit_text(response_text, parse_mode="Markdown")
+        
+    # Изменили parse_mode на HTML
+    await waiting_msg.edit_text(response_text, parse_mode="HTML")
 
 async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Message, waiting_msg: Message):
-    """Общая функция отправки аудио на HF"""
     geo = get_user_geo(message.from_user.id)
     
     data = aiohttp.FormData()
@@ -133,7 +176,6 @@ async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Messag
         await waiting_msg.edit_text("😔 Голоса знакомых птиц на записи не обнаружены")
         return
 
-    # Краткая сводка
     audio_summary = {}
     for det in detections:
         bird_name = det['name']
@@ -145,36 +187,33 @@ async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Messag
     
     response_text = "🎧 Услышал:\n"
     for i, (bird_name, confidence) in enumerate(sorted_birds):
-        response_text += f"{i+1}. {bird_name} — {confidence:.1%}\n"
+        bird_html = make_bird_html_link(bird_name)
+        response_text += f"{i+1}. {bird_html} — {confidence:.1%}\n"
 
-    # Подробный таймлайн для скрытия под кнопку
-    detailed_text = "⏳ **Подробный таймлайн:**\n\n"
+    # Заменили ** на HTML-тег <b> для жирности текста
+    detailed_text = "⏳ <b>Подробный таймлайн:</b>\n\n"
     for i, det in enumerate(detections):
-        detailed_text += f"{i+1}. **{det['name']}** ({det['start']:.1f}с - {det['end']:.1f}с) — {det['confidence']:.1%}\n"
+        bird_html = make_bird_html_link(det['name'])
+        detailed_text += f"{i+1}. <b>{bird_html}</b> ({det['start']:.1f}с - {det['end']:.1f}с) — {det['confidence']:.1%}\n"
 
-    # Сохраняем подробности в кэш
     cache_key = f"{message.chat.id}_{waiting_msg.message_id}"
     AUDIO_CACHE[cache_key] = detailed_text
 
-    # Создаем инлайн-кнопку
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⏱️ Кто когда пел?", callback_data=f"audio_details:{cache_key}")]
     ])
 
-    await waiting_msg.edit_text(response_text, parse_mode="Markdown", reply_markup=keyboard)
+    await waiting_msg.edit_text(response_text, parse_mode="HTML", reply_markup=keyboard)
 
-# Хендлер для обработки нажатия на кнопку "Кто когда пел?"
 @dp.callback_query(F.data.startswith("audio_details:"))
 async def handle_audio_details(callback: CallbackQuery):
     cache_key = callback.data.split(":")[1]
     detailed_text = AUDIO_CACHE.get(cache_key)
     
     if detailed_text:
-        # Обновляем сообщение подробным текстом и убираем кнопку
-        await callback.message.edit_text(detailed_text, parse_mode="Markdown")
+        await callback.message.edit_text(detailed_text, parse_mode="HTML")
     else:
-        # Если Render за это время перезапустился, кэш очистится
-        await callback.answer("⚠️ Данные таймлайна устарели или бот был перезапущен.", show_alert=True)
+        await callback.answer("⚠️ Данные таймлайна устарели или бот был перезапущен", show_alert=True)
 
 @dp.message(F.voice | F.audio)
 async def handle_audio(message: Message):
@@ -184,7 +223,6 @@ async def handle_audio(message: Message):
     file_info = await bot.get_file(audio_obj.file_id)
     file_bytes = await bot.download_file(file_info.file_path)
     
-    # Передаем оригинальное расширение (ogg для voice, или mp3/wav для файлов)
     ext = file_info.file_path.split('.')[-1]
     await process_audio_bytes(file_bytes.read(), f"track.{ext}", message, waiting_msg)
 
@@ -196,7 +234,6 @@ async def handle_video(message: Message):
     file_info = await bot.get_file(video_obj.file_id)
     video_bytes = await bot.download_file(file_info.file_path)
     
-    # Временное сохранение видео во избежание проблем с памятью pydub
     video_ext = file_info.file_path.split('.')[-1]
     temp_video_name = f"temp_vid.{video_ext}"
     temp_audio_name = "temp_aud.mp3"
@@ -205,20 +242,18 @@ async def handle_video(message: Message):
         f.write(video_bytes.read())
         
     try:
-        # Конвертируем видео в MP3 через pydub
         audio_track = AudioSegment.from_file(temp_video_name)
         audio_track.export(temp_audio_name, format="mp3")
         
         with open(temp_audio_name, "rb") as f:
             mp3_bytes = f.read()
             
-        await waiting_msg.edit_text("🎵 Аудио успешно извлечено! Распознаю голоса...")
+        await waiting_msg.edit_text("🎵 Распознаю голоса...")
         await process_audio_bytes(mp3_bytes, "track.mp3", message, waiting_msg)
         
     except Exception as e:
         await waiting_msg.edit_text(f"❌ Ошибка конвертации видео: {e}")
     finally:
-        # Чистим за собой временные файлы на Render
         if os.path.exists(temp_video_name): os.remove(temp_video_name)
         if os.path.exists(temp_audio_name): os.remove(temp_audio_name)
 
@@ -226,11 +261,9 @@ async def run_bot():
     await dp.start_polling(bot)
 
 async def main():
-    # Запуск FastAPI на порту 8000
     config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
     server = uvicorn.Server(config)
     
-    # Запускаем бота и веб-сервер параллельно в одном event loop
     await asyncio.gather(
         server.serve(),
         run_bot()
