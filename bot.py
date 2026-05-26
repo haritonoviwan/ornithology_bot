@@ -15,6 +15,7 @@ HF_URL = os.getenv("HF_URL")
 
 USER_LOCATIONS = {
     347493302: {"lat": 55.71, "lng": 37.87},
+    1108794476:  {"lat": 53.00882, "lng": 50.15176},
 }
 
 AUDIO_CACHE = {}
