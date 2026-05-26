@@ -51,7 +51,7 @@ async def handle_location(message: Message):
 
 @dp.message(F.photo)
 async def handle_photo(message: Message):
-    waiting_msg = await message.answer("📸 Обрабатываю изображение, секунду...")
+    waiting_msg = await message.reply("📸 Обрабатываю изображение, секунду...")
     
     photo = message.photo[-1]
     file_info = await bot.get_file(photo.file_id)
@@ -93,10 +93,10 @@ async def handle_photo(message: Message):
             continue
         if len(cands) == 1:
             # Один уверенный кандидат
-            line = f"{i+1}. {cands[0]['name']} — {cands[0]['score']:.1%}"
+            line = f"{i+1}. {cands[0]['name']} - {cands[0]['score']:.1%}"
         else:
             # Два сомнительных кандидата
-            line = f"{i+1}. {cands[0]['name']} — {cands[0]['score']:.1%} или {cands[1]['name']} — {cands[1]['score']:.1%}"
+            line = f"{i+1}. {cands[0]['name']} - {cands[0]['score']:.1%} или {cands[1]['name']} - {cands[1]['score']:.1%}"
         response_text += line + "\n"
     await waiting_msg.edit_text(response_text, parse_mode="Markdown")
 
@@ -129,6 +129,7 @@ async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Messag
         await waiting_msg.edit_text("😔 Голоса знакомых птиц на записи не обнаружены")
         return
 
+    # Краткая сводка
     audio_summary = {}
     for det in detections:
         bird_name = det['name']
@@ -136,17 +137,44 @@ async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Messag
         if bird_name not in audio_summary or confidence > audio_summary[bird_name]:
             audio_summary[bird_name] = confidence
 
-    # Сортируем по убыванию уверенности
     sorted_birds = sorted(audio_summary.items(), key=lambda x: x[1], reverse=True)
+    
     response_text = "🎧 Услышал:\n"
     for i, (bird_name, confidence) in enumerate(sorted_birds):
         response_text += f"{i+1}. {bird_name} — {confidence:.1%}\n"
 
-    await waiting_msg.edit_text(response_text, parse_mode="Markdown")
+    # Подробный таймлайн для скрытия под кнопку
+    detailed_text = "⏳ **Подробный таймлайн:**\n\n"
+    for i, det in enumerate(detections):
+        detailed_text += f"{i+1}. **{det['name']}** ({det['start']:.1f}с - {det['end']:.1f}с) — {det['confidence']:.1%}\n"
+
+    # Сохраняем подробности в кэш
+    cache_key = f"{message.chat.id}_{waiting_msg.message_id}"
+    AUDIO_CACHE[cache_key] = detailed_text
+
+    # Создаем инлайн-кнопку
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏱️ Кто когда пел?", callback_data=f"audio_details:{cache_key}")]
+    ])
+
+    await waiting_msg.edit_text(response_text, parse_mode="Markdown", reply_markup=keyboard)
+
+# Хендлер для обработки нажатия на кнопку "Кто когда пел?"
+@dp.callback_query(F.data.startswith("audio_details:"))
+async def handle_audio_details(callback: CallbackQuery):
+    cache_key = callback.data.split(":")[1]
+    detailed_text = AUDIO_CACHE.get(cache_key)
+    
+    if detailed_text:
+        # Обновляем сообщение подробным текстом и убираем кнопку
+        await callback.message.edit_text(detailed_text, parse_mode="Markdown")
+    else:
+        # Если Render за это время перезапустился, кэш очистится
+        await callback.answer("⚠️ Данные таймлайна устарели или бот был перезапущен.", show_alert=True)
 
 @dp.message(F.voice | F.audio)
 async def handle_audio(message: Message):
-    waiting_msg = await message.answer("🎵 Слушаю аудио...")
+    waiting_msg = await message.reply("🎵 Слушаю аудио...")
     
     audio_obj = message.voice if message.voice else message.audio
     file_info = await bot.get_file(audio_obj.file_id)
@@ -158,7 +186,7 @@ async def handle_audio(message: Message):
 
 @dp.message(F.video | F.video_note)
 async def handle_video(message: Message):
-    waiting_msg = await message.answer("🎬 Извлекаю аудиодорожку из видео...")
+    waiting_msg = await message.reply("🎬 Слушаю звук из видео...")
     
     video_obj = message.video if message.video else message.video_note
     file_info = await bot.get_file(video_obj.file_id)
