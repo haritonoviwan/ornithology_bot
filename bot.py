@@ -43,17 +43,27 @@ if os.path.exists(TAXONOMY_PATH):
 else:
     logging.warning(f"⚠️ Файл {TAXONOMY_PATH} не найден рядом с bot.py. Ссылки генерироваться не будут.")
 
+# Фоновая задача для пинга HF
+async def keep_hf_alive():
+    """Периодически пингует Hugging Face Space, чтобы он не уходил в спячку"""
+    if not HF_URL:
+        logging.warning("⚠️ Переменная HF_URL не настроена. Пингер выключен.")
+        return
+        
+    while True:
+        await asyncio.sleep(3600)  # Пингуем каждый час
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(HF_URL, timeout=15) as resp:
+                    logging.info(f"Пинг HF Space. Статус: {resp.status}")
+        except Exception as e:
+            logging.error(f"Не удалось пингануть HF Space: {e}")
+
 def make_bird_html_link(display_name: str) -> str:
-    """
-    Парсит display_name и оборачивает нужную часть в HTML-ссылку на eBird,
-    если для этой птицы есть ebird_code.
-    """
     match = re.match(r"(.+?)\s*\((.+?)\)", display_name)
-    
     if match:
         ru_name = match.group(1).strip()
         latin_name = match.group(2).strip()
-        
         bird_info = TAXONOMY.get(latin_name)
         if bird_info and "ebird_code" in bird_info:
             url = f"https://ebird.org/species/{bird_info['ebird_code']}?siteLanguage=ru"
@@ -78,10 +88,8 @@ def get_user_geo(user_id: int):
 async def cmd_start(message: Message):
     await message.answer(
         "🕊️ Привет! Я бот-орнитолог\n\n"
-        
         "📸 Отправь мне фото - я найду и распознаю птиц\n"
         "🎶 Отправь аудио или видео - я определю птиц по пению\n\n"
-        
         "🌍 Чтобы точность была выше, отправь мне свою геопозицию"
     )
 
@@ -90,7 +98,6 @@ async def handle_location(message: Message):
     user_id = message.from_user.id
     lat = message.location.latitude
     lng = message.location.longitude
-    
     USER_LOCATIONS[user_id] = {"lat": lat, "lng": lng}
     await message.answer(f"📍 Локация сохранена\n Текущие координаты: {lat:.2f}, {lng:.2f}")
 
@@ -117,11 +124,12 @@ async def handle_photo(message: Message):
                     return
                 result = await resp.json()
         except Exception as e:
-            await waiting_msg.edit_text(f"❌ Не удалось связаться с сервером: {e}")
+            logging.error(f"Ошибка связи с HF (фото): {e}")
+            await waiting_msg.edit_text("⏳ Сервер нейросетей спал и сейчас просыпается. Пожалуйста, повтори отправку через пару минут")
             return
 
     if result.get('status') == 'loading':
-        await waiting_msg.edit_text("⏳ Модели на сервере сейчас просыпаются и подгружаются. Попробуй еще раз через минуту!")
+        await waiting_msg.edit_text("⏳ Модели на сервере сейчас просыпаются и подгружаются. Попробуй еще раз через пару минут")
         return
 
     predictions = result.get('predictions', [])
@@ -129,7 +137,6 @@ async def handle_photo(message: Message):
         await waiting_msg.edit_text("🤔 Птиц на фото не обнаружено или я не смог их рассмотреть")
         return
 
-    # Считаем суммарное количество птиц (вариантов) во всем ответе нейросети
     total_birds_count = 0
     response_text = "📸 Заметил:\n"
     
@@ -147,9 +154,8 @@ async def handle_photo(message: Message):
             bird_html1 = make_bird_html_link(cands[0]['name'])
             bird_html2 = make_bird_html_link(cands[1]['name'])
             line = f"{i+1}. {bird_html1} — {cands[0]['score']:.1%} или {bird_html2} — {cands[1]['score']:.1%}"
-        response_text += line + "\n"
+            response_text += line + "\n"
         
-    # Настраиваем превью в зависимости от общего числа птиц
     if total_birds_count == 1:
         photo_preview = LinkPreviewOptions(is_disabled=False, prefer_small_media=True)
     else:
@@ -173,7 +179,8 @@ async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Messag
                     return
                 result = await resp.json()
         except Exception as e:
-            await waiting_msg.edit_text(f"❌ Ошибка отправки аудио: {e}")
+            logging.error(f"Ошибка связи с HF (аудио): {e}")
+            await waiting_msg.edit_text("⏳ Сервер нейросетей спал и сейчас просыпается. Пожалуйста, повтори отправку через пару минут")
             return
 
     if result.get('status') == 'loading':
@@ -208,10 +215,9 @@ async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Messag
     AUDIO_CACHE[cache_key] = detailed_text
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⏱️ Кто когда пел?", callback_data=f"audio_details:{cache_key}")]
+        [InlineKeyboardButton(text="⏱️ Who sang when?", callback_data=f"audio_details:{cache_key}")]
     ])
 
-    # Настраиваем превью для аудио (смотрим на количество уникальных услышанных видов)
     if len(sorted_birds) == 1:
         audio_preview = LinkPreviewOptions(is_disabled=False, prefer_small_media=True)
     else:
@@ -223,18 +229,26 @@ async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Messag
 async def handle_audio_details(callback: CallbackQuery):
     cache_key = callback.data.split(":")[1]
     detailed_text = AUDIO_CACHE.get(cache_key)
-    
     if detailed_text:
-        # В развернутом таймлайне превью всегда выключено для чистоты
         await callback.message.edit_text(detailed_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
     else:
         await callback.answer("⚠️ Данные таймлайна устарели или бот был перезапущен", show_alert=True)
 
-@dp.message(F.voice | F.audio)
+@dp.message(F.voice | F.audio | F.document)
 async def handle_audio(message: Message):
+    # Если это документ, выполняем строгую проверку расширения
+    if message.document:
+        filename = message.document.file_name or ""
+        ext = filename.split('.')[-1].lower()
+        # Список расширений, которые мы готовы отправить на анализ
+        if ext not in ['aac', 'mp3', 'wav', 'm4a', 'flac', 'ogg', 'amr']:
+            return  # Любые другие документы (картинки, pdf) просто игнорируем
+        audio_obj = message.document
+    else:
+        audio_obj = message.voice if message.voice else message.audio
+
     waiting_msg = await message.reply("🎵 Слушаю аудио...")
     
-    audio_obj = message.voice if message.voice else message.audio
     file_info = await bot.get_file(audio_obj.file_id)
     file_bytes = await bot.download_file(file_info.file_path)
     
@@ -278,6 +292,9 @@ async def run_bot():
 async def main():
     config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
     server = uvicorn.Server(config)
+    
+    # Запускаем фоновый пингер HF в таске 
+    asyncio.create_task(keep_hf_alive())
     
     await asyncio.gather(
         server.serve(),
