@@ -10,6 +10,7 @@ from aiogram.filters import Command
 from pydub import AudioSegment
 import uvicorn
 from fastapi import FastAPI
+import io
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 HF_URL = os.getenv("HF_URL")
@@ -236,24 +237,50 @@ async def handle_audio_details(callback: CallbackQuery):
 
 @dp.message(F.voice | F.audio | F.document)
 async def handle_audio(message: Message):
-    # Если это документ, выполняем строгую проверку расширения
+    # Определяем, с чем имеем дело
     if message.document:
         filename = message.document.file_name or ""
         ext = filename.split('.')[-1].lower()
-        # Список расширений, которые мы готовы отправить на анализ
         if ext not in ['aac', 'mp3', 'wav', 'm4a', 'flac', 'ogg', 'amr']:
-            return  # Любые другие документы (картинки, pdf) просто игнорируем
+            return  # Игнорируем левые документы (pdf, изображения)
         audio_obj = message.document
     else:
         audio_obj = message.voice if message.voice else message.audio
+        # Для voice/audio расширение вытаскиваем из mime_type или file_path
+        ext = "ogg" if message.voice else (audio_obj.file_name or "mp3").split('.')[-1].lower()
 
-    waiting_msg = await message.reply("🎵 Слушаю аудио...")
+    waiting_msg = await message.reply("🎵 Принял аудио, готовлю к анализу...")
     
     file_info = await bot.get_file(audio_obj.file_id)
     file_bytes = await bot.download_file(file_info.file_path)
-    
-    ext = file_info.file_path.split('.')[-1]
-    await process_audio_bytes(file_bytes.read(), f"track.{ext}", message, waiting_msg)
+    raw_data = file_bytes.read()
+
+    # Если формат не идеален для BirdNET, конвертируем его локально через pydub
+    if ext not in ['mp3', 'wav']:
+        try:
+            await waiting_msg.edit_text("⚡ Оптимизирую аудиоформат...")
+            # Читаем байты в pydub (указываем исходный формат)
+            audio_segment = AudioSegment.from_file(io.BytesIO(raw_data), format=ext)
+            
+            # Экспортируем в чистый MP3 в оперативную память
+            mp3_buffer = io.BytesIO()
+            audio_segment.export(mp3_buffer, format="mp3")
+            mp3_bytes = mp3_buffer.getvalue()
+            
+            filename_to_send = "track.mp3"
+            data_to_send = mp3_bytes
+        except Exception as e:
+            logging.error(f"Ошибка локальной конвертации: {e}")
+            # Если pydub не справился, пробуем отправить как есть, вдруг HF обработает
+            filename_to_send = f"track.{ext}"
+            data_to_send = raw_data
+    else:
+        filename_to_send = f"track.{ext}"
+        data_to_send = raw_data
+
+    # Отправляем на HF уже валидный файл
+    await waiting_msg.edit_text("🎵 Распознаю голоса птиц...")
+    await process_audio_bytes(data_to_send, filename_to_send, message, waiting_msg)
 
 @dp.message(F.video | F.video_note)
 async def handle_video(message: Message):
