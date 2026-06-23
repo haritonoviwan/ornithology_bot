@@ -44,15 +44,13 @@ if os.path.exists(TAXONOMY_PATH):
 else:
     logging.warning(f"⚠️ Файл {TAXONOMY_PATH} не найден рядом с bot.py. Ссылки генерироваться не будут.")
 
-# Фоновая задача для пинга HF
 async def keep_hf_alive():
-    """Периодически пингует Hugging Face Space, чтобы он не уходил в спячку"""
     if not HF_URL:
         logging.warning("⚠️ Переменная HF_URL не настроена. Пингер выключен.")
         return
         
     while True:
-        await asyncio.sleep(3600)  # Пингуем каждый час
+        await asyncio.sleep(3600)  # Раз в час вполне ок
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(HF_URL, timeout=15) as resp:
@@ -148,6 +146,7 @@ async def handle_photo(message: Message):
             
         total_birds_count += len(cands)
         
+        # === ИЗМЕНЕНО: Исправлен баг сборки строки ответа ===
         if len(cands) == 1:
             bird_html = make_bird_html_link(cands[0]['name'])
             line = f"{i+1}. {bird_html} — {cands[0]['score']:.1%}"
@@ -155,7 +154,8 @@ async def handle_photo(message: Message):
             bird_html1 = make_bird_html_link(cands[0]['name'])
             bird_html2 = make_bird_html_link(cands[1]['name'])
             line = f"{i+1}. {bird_html1} — {cands[0]['score']:.1%} или {bird_html2} — {cands[1]['score']:.1%}"
-            response_text += line + "\n"
+        
+        response_text += line + "\n"
         
     if total_birds_count == 1:
         photo_preview = LinkPreviewOptions(is_disabled=False, prefer_small_media=True)
@@ -237,16 +237,14 @@ async def handle_audio_details(callback: CallbackQuery):
 
 @dp.message(F.voice | F.audio | F.document)
 async def handle_audio(message: Message):
-    # Определяем, с чем имеем дело
     if message.document:
         filename = message.document.file_name or ""
         ext = filename.split('.')[-1].lower()
         if ext not in ['aac', 'mp3', 'wav', 'm4a', 'flac', 'ogg', 'amr']:
-            return  # Игнорируем левые документы (pdf, изображения)
+            return  
         audio_obj = message.document
     else:
         audio_obj = message.voice if message.voice else message.audio
-        # Для voice/audio расширение вытаскиваем из mime_type или file_path
         ext = "ogg" if message.voice else (audio_obj.file_name or "mp3").split('.')[-1].lower()
 
     waiting_msg = await message.reply("🎵 Принял аудио, готовлю к анализу...")
@@ -255,30 +253,29 @@ async def handle_audio(message: Message):
     file_bytes = await bot.download_file(file_info.file_path)
     raw_data = file_bytes.read()
 
-    # Если формат не идеален для BirdNET, конвертируем его локально через pydub
     if ext not in ['mp3', 'wav']:
         try:
             await waiting_msg.edit_text("⏳ Оптимизирую аудиоформат...")
-            # Читаем байты в pydub (указываем исходный формат)
-            audio_segment = AudioSegment.from_file(io.BytesIO(raw_data), format=ext)
             
-            # Экспортируем в чистый MP3 в оперативную память
+            # === ИЗМЕНЕНО: Выносим тяжелый синхронный pydub в отдельный поток ===
+            audio_segment = await asyncio.to_thread(
+                AudioSegment.from_file, io.BytesIO(raw_data), format=ext
+            )
+            
             mp3_buffer = io.BytesIO()
-            audio_segment.export(mp3_buffer, format="mp3")
+            await asyncio.to_thread(audio_segment.export, mp3_buffer, format="mp3")
             mp3_bytes = mp3_buffer.getvalue()
             
             filename_to_send = "track.mp3"
             data_to_send = mp3_bytes
         except Exception as e:
             logging.error(f"Ошибка локальной конвертации: {e}")
-            # Если pydub не справился, пробуем отправить как есть, вдруг HF обработает
             filename_to_send = f"track.{ext}"
             data_to_send = raw_data
     else:
         filename_to_send = f"track.{ext}"
         data_to_send = raw_data
 
-    # Отправляем на HF уже валидный файл
     await waiting_msg.edit_text("🎵 Распознаю голоса птиц...")
     await process_audio_bytes(data_to_send, filename_to_send, message, waiting_msg)
 
@@ -298,8 +295,9 @@ async def handle_video(message: Message):
         f.write(video_bytes.read())
         
     try:
-        audio_track = AudioSegment.from_file(temp_video_name)
-        audio_track.export(temp_audio_name, format="mp3")
+        # === ИЗМЕНЕНО: Выносим pydub из видео тоже в отдельный поток ===
+        audio_track = await asyncio.to_thread(AudioSegment.from_file, temp_video_name)
+        await asyncio.to_thread(audio_track.export, temp_audio_name, format="mp3")
         
         with open(temp_audio_name, "rb") as f:
             mp3_bytes = f.read()
@@ -317,10 +315,11 @@ async def run_bot():
     await dp.start_polling(bot)
 
 async def main():
-    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
+    # === ИЗМЕНЕНО: Динамический порт из окружения Render ===
+    port = int(os.getenv("PORT", 8000))
+    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
     server = uvicorn.Server(config)
     
-    # Запускаем фоновый пингер HF в таске 
     asyncio.create_task(keep_hf_alive())
     
     await asyncio.gather(
