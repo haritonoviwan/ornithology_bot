@@ -216,7 +216,7 @@ async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Messag
     AUDIO_CACHE[cache_key] = detailed_text
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⏱️ Who sang when?", callback_data=f"audio_details:{cache_key}")]
+        [InlineKeyboardButton(text="⏱️ Кто когда пел?", callback_data=f"audio_details:{cache_key}")]
     ])
 
     if len(sorted_birds) == 1:
@@ -258,7 +258,7 @@ async def handle_audio(message: Message):
     # Если формат не идеален для BirdNET, конвертируем его локально через pydub
     if ext not in ['mp3', 'wav']:
         try:
-            await waiting_msg.edit_text("⚡ Оптимизирую аудиоформат...")
+            await waiting_msg.edit_text("⏳ Оптимизирую аудиоформат...")
             # Читаем байты в pydub (указываем исходный формат)
             audio_segment = AudioSegment.from_file(io.BytesIO(raw_data), format=ext)
             
