@@ -5,8 +5,10 @@ import asyncio
 import re
 import aiohttp
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ContentType, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LinkPreviewOptions
+from aiogram.types import Message, ContentType, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LinkPreviewOptions, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import Command
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.context import FSMContext
 from pydub import AudioSegment
 import uvicorn
 from fastapi import FastAPI
@@ -85,11 +87,18 @@ def get_user_geo(user_id: int):
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
+    # Нижняя клавиатура с кнопкой мастера
+    main_kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="🪶 Определитель")]],
+        resize_keyboard=True
+    )
     await message.answer(
         "🕊️ Привет! Я бот-орнитолог\n\n"
         "📸 Отправь мне фото - я найду и распознаю птиц\n"
-        "🎶 Отправь аудио или видео - я определю птиц по пению\n\n"
-        "🌍 Чтобы точность была выше, отправь мне свою геопозицию"
+        "🎶 Отправь аудио или видео - я определю птиц по пению"
+        "🪶 Нет ни фото, ни звука? Нажми кнопку внизу, ответь на пару вопросов о птице, и я помогу её определить\n\n"
+        "🌍 Чтобы точность была выше, отправь мне свою геопозицию",
+        reply_markup=main_kb
     )
 
 @dp.message(F.content_type == ContentType.LOCATION)
@@ -145,8 +154,6 @@ async def handle_photo(message: Message):
             continue
             
         total_birds_count += len(cands)
-        
-        # === ИЗМЕНЕНО: Исправлен баг сборки строки ответа ===
         if len(cands) == 1:
             bird_html = make_bird_html_link(cands[0]['name'])
             line = f"{i+1}. {bird_html} — {cands[0]['score']:.1%}"
@@ -311,11 +318,205 @@ async def handle_video(message: Message):
         if os.path.exists(temp_video_name): os.remove(temp_video_name)
         if os.path.exists(temp_audio_name): os.remove(temp_audio_name)
 
+# === СОСТОЯНИЯ ДЛЯ НАШЕГО МАСТЕРА ===
+class MorphSearchState(StatesGroup):
+    choosing_size = State()
+    choosing_colors = State()
+    choosing_habitat = State()
+
+# === СЛОВАРИ ПЕРЕВОДОВ ===
+SIZE_MAP = {
+    1: "С воробья или меньше",
+    2: "Между воробьем и дроздом",
+    3: "С дрозда",
+    4: "Между дроздом и вороной",
+    5: "С ворону",
+    6: "Между вороной и гусем",
+    7: "С гуся или крупнее"
+}
+
+COLOR_MAP = {
+    "black": "Черная", "grey": "Серая", "white": "Белая", 
+    "brown_beige": "Коричневая/Бежевая", "red_rufous": "Красная/Рыжая", 
+    "yellow": "Желтая", "green_olive": "Зеленая/Оливковая", 
+    "blue_cyan": "Голубая/Синяя", "orange": "Оранжевая"
+}
+
+HABITAT_MAP = {
+    "feeder": "На кормушке", "water": "В воде", "ground": "На земле", 
+    "trees_bushes": "В деревьях/кустах", "fence_wire": "На заборе/проводе", "air": "В воздухе"
+}
+
+def get_size_keyboard():
+    buttons = []
+    for num, text in SIZE_MAP.items():
+        buttons.append([InlineKeyboardButton(text=text, callback_data=f"set_size:{num}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_colors_keyboard(selected_colors: list):
+    buttons = []
+    row = []
+    for eng_name, ru_name in COLOR_MAP.items():
+        # Если цвет уже выбран пользователем, помечаем его галочкой
+        mark = "✅ " if eng_name in selected_colors else ""
+        row.append(InlineKeyboardButton(text=f"{mark}{ru_name}", callback_data=f"toggle_color:{eng_name}"))
+        if len(row) == 2:  # Делаем сетку 2 кнопки в ряд
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    # Добавляем финальную кнопку подтверждения в самый низ
+    buttons.append([InlineKeyboardButton(text="Готово, к месту ➡️", callback_data="colors_done")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_habitat_keyboard():
+    buttons = []
+    for eng_name, ru_name in HABITAT_MAP.items():
+        buttons.append([InlineKeyboardButton(text=ru_name, callback_data=f"set_habitat:{eng_name}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# Старт опроса при нажатии на кнопку
+@dp.message(F.text == "🪶 Определитель")
+async def start_morph_search(message: Message, state: FSMContext):
+    await state.clear()  # Обнуляем старые сессии опроса
+    await state.set_state(MorphSearchState.choosing_size)
+    
+    await message.answer(
+        "🪶 <b>Мастер определения птицы</b>\n\n"
+        "Выберем параметры на основе ваших наблюдений.\n"
+        "<i>Локация и дата определены автоматически.</i>\n\n"
+        "👉 <b>Шаг 1 из 3: Какого размера была птица?</b>",
+        parse_mode="HTML",
+        reply_markup=get_size_keyboard()
+    )
+
+# Обработка выбора размера -> Переход к выбору цвета
+@dp.callback_query(F.data.startswith("set_size:"), MorphSearchState.choosing_size)
+async def handle_size_choice(callback: CallbackQuery, state: FSMContext):
+    size_num = int(callback.data.split(":")[1])
+    await state.update_data(size=size_num, colors=[]) # Инициализируем пустой список цветов
+    await state.set_state(MorphSearchState.choosing_colors)
+    text = (
+        f"🪶 <b>Мастер определения птицы</b>\n\n"
+        f"📏 <b>Размер:</b> {SIZE_MAP[size_num]}\n\n"
+        f"👉 <b>Шаг 2 из 3: Какого цвета она была преимущественно?</b>\n"
+        f"<i>Можно выбрать до 3-4 вариантов. Повторный клик снимает выделение.</i>"
+    )
+    # Изменяем сообщение на месте
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_colors_keyboard([]))
+    await callback.answer()
+
+# (Интерактивный) Переключение галочек цветов
+@dp.callback_query(F.data.startswith("toggle_color:"), MorphSearchState.choosing_colors)
+async def handle_color_toggle(callback: CallbackQuery, state: FSMContext):
+    color_clicked = callback.data.split(":")[1]
+    data = await state.get_data()
+    current_colors = data.get("colors", [])
+    if color_clicked in current_colors:
+        current_colors.remove(color_clicked)
+    else:
+        current_colors.append(color_clicked)
+    await state.update_data(colors=current_colors)
+    # Просто обновляем разметку кнопок (галочки), текст не меняем, чтобы экран не мерцал
+    await callback.message.edit_reply_markup(reply_markup=get_colors_keyboard(current_colors))
+    await callback.answer()
+
+# Завершение выбора цвета -> Переход к биотопу
+@dp.callback_query(F.data == "colors_done", MorphSearchState.choosing_colors)
+async def handle_colors_done(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    chosen_colors = data.get("colors", [])
+    
+    # Переводим на русский для красивого отображения в "бланке"
+    colors_ru = ", ".join([COLOR_MAP[c] for c in chosen_colors]) if chosen_colors else "Не выбрано"
+    await state.update_data(colors_ru_text=colors_ru)
+    await state.set_state(MorphSearchState.choosing_habitat)
+    
+    text = (
+        f"🪶 <b>Мастер определения птицы</b>\n\n"
+        f"📏 <b>Размер:</b> {SIZE_MAP[data['size']]}\n"
+        f"🎨 <b>Цвета:</b> {colors_ru}\n\n"
+        f"👉 <b>Шаг 3 из 3: Где именно находилась птица?</b>"
+    )
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_habitat_keyboard())
+    await callback.answer()
+
+# Сбор данных и отправка запроса на HF
+@dp.callback_query(F.data.startswith("set_habitat:"), MorphSearchState.choosing_habitat)
+async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
+    habitat_key = callback.data.split(":")[1]
+    data = await state.get_data()
+    # Вытаскиваем геопозицию из словаря USER_LOCATIONS
+    geo = get_user_geo(callback.from_user.id)
+    # Обновляем текст, показывая, что пошел поиск
+    text_loading = (
+        f"🪶 <b>Мастер определения птицы</b>\n\n"
+        f"📏 <b>Размер:</b> {SIZE_MAP[data['size']]}\n"
+        f"🎨 <b>Цвета:</b> {data['colors_ru_text']}\n"
+        f"🏡 <b>Биотоп:</b> {HABITAT_MAP[habitat_key]}\n\n"
+        f"🔍 <i>Сверяюсь с орнитологической базой региона... Секунду...</i>"
+    )
+    await callback.message.edit_text(text_loading, parse_mode="HTML", reply_markup=None)
+    await callback.answer()
+    # Формируем Payload для нашего нового эндпоинта на HF
+    form_data = aiohttp.FormData()
+    form_data.add_field('lat', str(geo['lat']))
+    form_data.add_field('lng', str(geo['lng']))
+    form_data.add_field('size', str(data['size']))
+    form_data.add_field('colors', json.dumps(data['colors']))
+    form_data.add_field('habitat', habitat_key)
+    
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(f"{HF_URL}/search-by-morphology", data=form_data, timeout=30) as resp:
+                if resp.status != 200:
+                    await callback.message.edit_text("❌ Ошибка сервера классификации при поиске по признакам.")
+                    await state.clear()
+                    return
+                result = await resp.json()
+        except Exception as e:
+            logging.error(f"Ошибка связи с HF (морфология): {e}")
+            await callback.message.edit_text("⏳ Сервер нейросетей ушел на перезагрузку. Попробуйте повторить операцию через пару минут")
+            await state.clear()
+            return
+    if result.get('status') == 'loading':
+        await callback.message.edit_text("⏳ Модели на сервере подгружаются. Попробуйте еще раз через пару минут")
+        await state.clear()
+        return
+    predictions = result.get('predictions', [])
+    # Формируем итоговый ответ
+    response_text = (
+        f"🪶 <b>Результаты определения:</b>\n"
+        f"Основано на признаках, координатах и текущем сезоне.\n\n"
+    )
+    if not predictions:
+        response_text += "😔 К сожалению, птиц со схожими параметрами в этом регионе сейчас не зафиксировано. Попробуйте немного расширить критерии (указать смежный размер или убрать редкий цвет)"
+    else:
+        response_text += "🎯 <b>Возможные кандидаты (по убыванию вероятности):</b>\n"
+        for i, pred in enumerate(predictions):
+            # Используем функцию генерации красивых ссылок на eBird
+            bird_html = make_bird_html_link(pred['name'])
+            # Скор из BirdNET Geo показывает силу присутствия вида в это время года здесь
+            geo_weight = pred['score']
+            
+            if geo_weight > 0.1:
+                status = "🟢 Часто"
+            elif geo_weight > 0.01:
+                status = "🟡 Встречается"
+            else:
+                status = "⚪ Редко"
+                
+            response_text += f"{i+1}. {bird_html} — {status}\n"
+            
+    # Обновляем то самое сообщение финальным результатом
+    await callback.message.edit_text(response_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
+    await state.clear() # Очищаем состояние памяти
+
 async def run_bot():
     await dp.start_polling(bot)
 
 async def main():
-    # === ИЗМЕНЕНО: Динамический порт из окружения Render ===
+    # Динамический порт из окружения Render
     port = int(os.getenv("PORT", 8000))
     config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
     server = uvicorn.Server(config)
