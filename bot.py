@@ -503,18 +503,19 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
     else:
         response_text += "🎯 <b>Возможные кандидаты:</b>\n"
         for i, pred in enumerate(predictions):
-            # Используем функцию генерации красивых ссылок на eBird
             bird_html = make_bird_html_link(pred['name'])
-            # Скор из BirdNET Geo показывает силу присутствия вида в это время года здесь
-            geo_weight = pred['score'] 
+            # Считаем процент совпадения примет
+            match_percent = pred.get('morph_score', 1.0) * 100
+            # Определяем статус редкости по geo_score
+            geo_weight = pred.get('geo_score', 0.0)
             if geo_weight > 0.1:
                 status = "🟢Часто"
             elif geo_weight > 0.01:
                 status = "🟡Встречается"
             else:
                 status = "🔴Редко"
-                
-            response_text += f"{i+1}. {bird_html} — {status}\n"
+            # Красивая информативная строка
+            response_text += f"{i+1}. {bird_html} — Совпадение: <b>{match_percent:.0f}%</b> ({status})\n"
             
     # Обновляем то самое сообщение финальным результатом
     await callback.message.edit_text(response_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
