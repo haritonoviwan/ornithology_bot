@@ -263,12 +263,10 @@ async def handle_audio(message: Message):
     if ext not in ['mp3', 'wav']:
         try:
             await waiting_msg.edit_text("⏳ Оптимизирую аудиоформат...")
-            
-            # === ИЗМЕНЕНО: Выносим тяжелый синхронный pydub в отдельный поток ===
+            # Выносим тяжелый синхронный pydub в отдельный поток
             audio_segment = await asyncio.to_thread(
                 AudioSegment.from_file, io.BytesIO(raw_data), format=ext
             )
-            
             mp3_buffer = io.BytesIO()
             await asyncio.to_thread(audio_segment.export, mp3_buffer, format="mp3")
             mp3_bytes = mp3_buffer.getvalue()
@@ -302,7 +300,7 @@ async def handle_video(message: Message):
         f.write(video_bytes.read())
         
     try:
-        # === ИЗМЕНЕНО: Выносим pydub из видео тоже в отдельный поток ===
+        # Выносим pydub из видео тоже в отдельный поток
         audio_track = await asyncio.to_thread(AudioSegment.from_file, temp_video_name)
         await asyncio.to_thread(audio_track.export, temp_audio_name, format="mp3")
         
@@ -411,12 +409,21 @@ async def handle_color_toggle(callback: CallbackQuery, state: FSMContext):
     color_clicked = callback.data.split(":")[1]
     data = await state.get_data()
     current_colors = data.get("colors", [])
+    
     if color_clicked in current_colors:
         current_colors.remove(color_clicked)
     else:
+        # Лимит: если уже выбрано 4 цвета, а юзер жмет на 5-й
+        if len(current_colors) >= 4:
+            await callback.answer(
+                text="⚠️ Можно выбрать не более 4 цветов!", 
+                show_alert=True  # Всплывающее окошко по центру экрана
+            )
+            return  # Прерываем выполнение, ничего не добавляя и не перерисовывая
         current_colors.append(color_clicked)
     await state.update_data(colors=current_colors)
-    # Просто обновляем разметку кнопок (галочки), текст не меняем, чтобы экран не мерцал
+    
+    # Обновляем разметку кнопок (галочки)
     await callback.message.edit_reply_markup(reply_markup=get_colors_keyboard(current_colors))
     await callback.answer()
 
@@ -449,7 +456,7 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
     geo = get_user_geo(callback.from_user.id)
     # Обновляем текст, показывая, что пошел поиск
     text_loading = (
-        f"🪶 <b>Мастер определения птицы</b>\n\n"
+        f"🪶 <b>Поиск по приметам</b>\n\n"
         f"📏 <b>Размер:</b> {SIZE_MAP[data['size']]}\n"
         f"🎨 <b>Цвет:</b> {data['colors_ru_text']}\n"
         f"🏡 <b>Место:</b> {HABITAT_MAP[habitat_key]}\n\n"
@@ -485,8 +492,11 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
     predictions = result.get('predictions', [])
     # Формируем итоговый ответ
     response_text = (
+        f"🪶 <b>Поиск по приметам</b>\n\n"
+        f"📏 <b>Размер:</b> {SIZE_MAP[data['size']]}\n"
+        f"🎨 <b>Цвет:</b> {data['colors_ru_text']}\n"
+        f"🏡 <b>Место:</b> {HABITAT_MAP[habitat_key]}\n\n"
         f"🪶 <b>Результаты определения:</b>\n"
-        f"Основано на признаках, координатах и текущем сезоне.\n\n"
     )
     if not predictions:
         response_text += (f"😔 К сожалению, не могу найти птиц со схожими параметрами в этом регионе\n"
@@ -497,14 +507,13 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
             # Используем функцию генерации красивых ссылок на eBird
             bird_html = make_bird_html_link(pred['name'])
             # Скор из BirdNET Geo показывает силу присутствия вида в это время года здесь
-            geo_weight = pred['score']
-            
+            geo_weight = pred['score'] 
             if geo_weight > 0.1:
-                status = "🟢 Часто"
+                status = "🟢Часто"
             elif geo_weight > 0.01:
-                status = "🟡 Встречается"
+                status = "🟡Встречается"
             else:
-                status = "⚪ Редко"
+                status = "🔴Редко"
                 
             response_text += f"{i+1}. {bird_html} — {status}\n"
             
