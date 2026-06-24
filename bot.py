@@ -493,10 +493,9 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
     # Формируем итоговый ответ
     response_text = (
         f"🪶 <b>Поиск по приметам</b>\n\n"
-        f"📏 <b>Размер:</b> {SIZE_MAP[data['size']]}\n"
-        f"🎨 <b>Цвет:</b> {data['colors_ru_text']}\n"
-        f"🏡 <b>Место:</b> {HABITAT_MAP[habitat_key]}\n\n"
-        f"🪶 <b>Результаты определения:</b>\n"
+        f"📏 Размер: {SIZE_MAP[data['size']]}\n"
+        f"🎨 Цвет: {data['colors_ru_text']}\n"
+        f"🏡 Место: {HABITAT_MAP[habitat_key]}\n\n"
     )
     if not predictions:
         response_text += (f"😔 К сожалению, не могу найти птиц со схожими параметрами в этом регионе\n"
