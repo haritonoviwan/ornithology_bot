@@ -95,8 +95,8 @@ async def cmd_start(message: Message):
     await message.answer(
         "🕊️ Привет! Я бот-орнитолог\n\n"
         "📸 Отправь мне фото - я найду и распознаю птиц\n"
-        "🎶 Отправь аудио или видео - я определю птиц по пению"
-        "🪶 Нет ни фото, ни звука? Нажми кнопку внизу, ответь на пару вопросов о птице, и я помогу её определить\n\n"
+        "🎶 Отправь аудио или видео - я определю птиц по пению\n"
+        "🪶 Нет ни фото, ни звука? Нажми кнопку внизу, ответь на пару вопросов, и я помогу её определить\n\n"
         "🌍 Чтобы точность была выше, отправь мне свою геопозицию",
         reply_markup=main_kb
     )
@@ -337,9 +337,9 @@ SIZE_MAP = {
 
 COLOR_MAP = {
     "black": "Черная", "grey": "Серая", "white": "Белая", 
-    "brown_beige": "Коричневая/Бежевая", "red_rufous": "Красная/Рыжая", 
+    "brown_beige": "Коричневая/Бежевая", "red_rufous": "Красная", 
     "yellow": "Желтая", "green_olive": "Зеленая/Оливковая", 
-    "blue_cyan": "Голубая/Синяя", "orange": "Оранжевая"
+    "blue_cyan": "Синяя/Голубая", "orange": "Оранжевая"
 }
 
 HABITAT_MAP = {
@@ -366,7 +366,7 @@ def get_colors_keyboard(selected_colors: list):
     if row:
         buttons.append(row)
     # Добавляем финальную кнопку подтверждения в самый низ
-    buttons.append([InlineKeyboardButton(text="Готово, к месту ➡️", callback_data="colors_done")])
+    buttons.append([InlineKeyboardButton(text="Далее ➡️", callback_data="colors_done")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_habitat_keyboard():
@@ -382,9 +382,8 @@ async def start_morph_search(message: Message, state: FSMContext):
     await state.set_state(MorphSearchState.choosing_size)
     
     await message.answer(
-        "🪶 <b>Мастер определения птицы</b>\n\n"
-        "Выберем параметры на основе ваших наблюдений.\n"
-        "<i>Локация и дата определены автоматически.</i>\n\n"
+        "🪶 <b>Поиск по приметам</b>\n\n"
+        "Ответь на пару вопросов на основе своих наблюдений\n\n"
         "👉 <b>Шаг 1 из 3: Какого размера была птица?</b>",
         parse_mode="HTML",
         reply_markup=get_size_keyboard()
@@ -397,10 +396,10 @@ async def handle_size_choice(callback: CallbackQuery, state: FSMContext):
     await state.update_data(size=size_num, colors=[]) # Инициализируем пустой список цветов
     await state.set_state(MorphSearchState.choosing_colors)
     text = (
-        f"🪶 <b>Мастер определения птицы</b>\n\n"
+        f"🪶 <b>Поиск по приметам</b>\n\n"
         f"📏 <b>Размер:</b> {SIZE_MAP[size_num]}\n\n"
         f"👉 <b>Шаг 2 из 3: Какого цвета она была преимущественно?</b>\n"
-        f"<i>Можно выбрать до 3-4 вариантов. Повторный клик снимает выделение.</i>"
+        f"<i>(Можно выбрать до 4 вариантов)</i>"
     )
     # Изменяем сообщение на месте
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_colors_keyboard([]))
@@ -433,10 +432,10 @@ async def handle_colors_done(callback: CallbackQuery, state: FSMContext):
     await state.set_state(MorphSearchState.choosing_habitat)
     
     text = (
-        f"🪶 <b>Мастер определения птицы</b>\n\n"
+        f"🪶 <b>Поиск по приметам</b>\n\n"
         f"📏 <b>Размер:</b> {SIZE_MAP[data['size']]}\n"
         f"🎨 <b>Цвета:</b> {colors_ru}\n\n"
-        f"👉 <b>Шаг 3 из 3: Где именно находилась птица?</b>"
+        f"👉 <b>Шаг 3 из 3: Где была птица?</b>"
     )
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_habitat_keyboard())
     await callback.answer()
@@ -452,9 +451,9 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
     text_loading = (
         f"🪶 <b>Мастер определения птицы</b>\n\n"
         f"📏 <b>Размер:</b> {SIZE_MAP[data['size']]}\n"
-        f"🎨 <b>Цвета:</b> {data['colors_ru_text']}\n"
-        f"🏡 <b>Биотоп:</b> {HABITAT_MAP[habitat_key]}\n\n"
-        f"🔍 <i>Сверяюсь с орнитологической базой региона... Секунду...</i>"
+        f"🎨 <b>Цвет:</b> {data['colors_ru_text']}\n"
+        f"🏡 <b>Место:</b> {HABITAT_MAP[habitat_key]}\n\n"
+        f"🔍 <i>Сверяюсь с орнитологической базой, секунду...</i>"
     )
     await callback.message.edit_text(text_loading, parse_mode="HTML", reply_markup=None)
     await callback.answer()
@@ -490,9 +489,10 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
         f"Основано на признаках, координатах и текущем сезоне.\n\n"
     )
     if not predictions:
-        response_text += "😔 К сожалению, птиц со схожими параметрами в этом регионе сейчас не зафиксировано. Попробуйте немного расширить критерии (указать смежный размер или убрать редкий цвет)"
+        response_text += (f"😔 К сожалению, не могу найти птиц со схожими параметрами в этом регионе\n"
+        f"<i>Попробуй немного расширить критерии (указать смежный размер или убрать редкий цвет)</i>")
     else:
-        response_text += "🎯 <b>Возможные кандидаты (по убыванию вероятности):</b>\n"
+        response_text += "🎯 <b>Возможные кандидаты:</b>\n"
         for i, pred in enumerate(predictions):
             # Используем функцию генерации красивых ссылок на eBird
             bird_html = make_bird_html_link(pred['name'])
