@@ -26,6 +26,7 @@ USER_LOCATIONS = {
 }
 
 AUDIO_CACHE = {}
+MORPH_CACHE = {}
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
@@ -241,6 +242,48 @@ async def handle_audio_details(callback: CallbackQuery):
         await callback.message.edit_text(detailed_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
     else:
         await callback.answer("⚠️ Данные таймлайна устарели или бот был перезапущен", show_alert=True)
+
+@dp.callback_query(F.data.startswith("more_birds:"))
+async def handle_more_birds(callback: CallbackQuery):
+    # Разбираем callback_data (формат: more_birds:cache_key:offset)
+    _, cache_key, offset_str = callback.data.split(":")
+    offset = int(offset_str)
+    
+    # Достаем данные из кэша
+    cached = MORPH_CACHE.get(cache_key)
+    if not cached:
+        await callback.answer("⚠️ Данные устарели или бот был перезапущен. Повторите поиск.", show_alert=True)
+        return
+        
+    predictions = cached["predictions"]
+    base_text = cached["base_text"]
+    
+    # Вычисляем, сколько птиц показать теперь (текущий offset + следующие 5)
+    next_offset = offset + 5
+    visible_predictions = predictions[:next_offset]
+    
+    response_text = base_text + "🎯 <b>Возможные кандидаты (Режим отладки):</b>\n\n"
+    
+    # Отрисовываем обновленный расширенный список
+    for i, pred in enumerate(visible_predictions):
+        bird_html = make_bird_html_link(pred['name'])
+        geo_score = pred.get('geo_score', 0.0)
+        morph_score = pred.get('morph_score', 0.0)
+        final_rank = pred.get('final_rank', 0.0)
+        
+        debug_info = f"<code>[G:{geo_score:.3f} * M:{morph_score:.2f} = {final_rank:.4f}]</code>"
+        response_text += f"{i+1}. {bird_html}\n└ {debug_info}\n\n"
+        
+    # Проверяем, остались ли еще скрытые птицы в запасе
+    keyboard = None
+    if len(predictions) > next_offset:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Ещё варианты 🔄", callback_data=f"more_birds:{cache_key}:{next_offset}")]
+        ])
+        
+    # Редактируем сообщение: текст увеличится, а кнопка либо обновит offset, либо исчезнет
+    await callback.message.edit_text(response_text, parse_mode="HTML", reply_markup=keyboard, link_preview_options=LinkPreviewOptions(is_disabled=True))
+    await callback.answer()
 
 @dp.message(F.voice | F.audio | F.document)
 async def handle_audio(message: Message):
@@ -490,27 +533,56 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         return
     predictions = result.get('predictions', [])
-    # Формируем итоговый ответ
-    response_text = (
+    
+    # Базовая шапка сообщения (сохраняем её отдельно в кэш, чтобы потом перерисовывать)
+    base_text = (
         f"🐦‍⬛ <b>Поиск по описанию</b>\n\n"
         f"📏 Размер: {SIZE_MAP[data['size']]}\n"
         f"🎨 Цвет: {data['colors_ru_text']}\n"
         f"🏡 Место: {HABITAT_MAP[habitat_key]}\n\n"
     )
+    
     if not predictions:
-        response_text += (f"😔 К сожалению, не могу найти птиц со схожими параметрами в этом регионе\n"
-        f"<i>Попробуй немного расширить критерии (указать смежный размер или убрать редкий цвет)</i>")
-    else:
-        response_text += "🎯 <b>Возможные кандидаты:</b>\n"
-        for i, pred in enumerate(predictions):
-            bird_html = make_bird_html_link(pred['name'])
-            # Считаем процент совпадения примет
-            match_percent = pred.get('morph_score', 1.0) * 100
-            response_text += f"{i+1}. {bird_html} - Совпадение: {match_percent:.0f}%\n"
+        response_text = base_text + (
+            f"😔 К сожалению, не могу найти птиц со схожими параметрами в этом регионе\n"
+            f"<i>Попробуй немного расширить критерии (указать смежный размер или убрать редкий цвет)</i>"
+        )
+        await callback.message.edit_text(response_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
+        await state.clear()
+        return
+
+    # Если птицы есть, собираем уникальный ключ для этого сообщения
+    cache_key = f"{callback.message.chat.id}_{callback.message.message_id}"
+    
+    # Сохраняем в кэш шапку и ВСЕХ найденных птиц (все 15 штук от бэкенда)
+    MORPH_CACHE[cache_key] = {
+        "base_text": base_text,
+        "predictions": predictions
+    }
+    
+    # Формируем текст для первых 5 кандидатов
+    response_text = base_text + "🎯 <b>Возможные кандидаты (Режим отладки):</b>\n\n"
+    visible_predictions = predictions[:5]
+    
+    for i, pred in enumerate(visible_predictions):
+        bird_html = make_bird_html_link(pred['name'])
+        geo_score = pred.get('geo_score', 0.0)
+        morph_score = pred.get('morph_score', 0.0)
+        final_rank = pred.get('final_rank', 0.0)
+        
+        debug_info = f"<code>[G:{geo_score:.3f} * M:{morph_score:.2f} = {final_rank:.4f}]</code>"
+        response_text += f"{i+1}. {bird_html}\n└ {debug_info}\n\n"
+        
+    # Если птиц всего больше 5, прикрепляем кнопку. Передаем в неё ключ кэша и offset=5
+    keyboard = None
+    if len(predictions) > 5:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Ещё варианты 🔄", callback_data=f"more_birds:{cache_key}:5")]
+        ])
             
-    # Обновляем то самое сообщение финальным результатом
-    await callback.message.edit_text(response_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
-    await state.clear() # Очищаем состояние памяти
+    # Обновляем сообщение первой порцией данных
+    await callback.message.edit_text(response_text, parse_mode="HTML", reply_markup=keyboard, link_preview_options=LinkPreviewOptions(is_disabled=True))
+    await state.clear() # Очищаем состояние опроса, оно больше не нужно
 
 async def run_bot():
     await dp.start_polling(bot)
