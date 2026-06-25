@@ -507,6 +507,7 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
     )
     await callback.message.edit_text(text_loading, parse_mode="HTML", reply_markup=None)
     await callback.answer()
+    
     # Формируем Payload для нашего нового эндпоинта на HF
     form_data = aiohttp.FormData()
     form_data.add_field('lat', str(geo['lat']))
@@ -528,13 +529,15 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
             await callback.message.edit_text("⏳ Сервер нейросетей ушел на перезагрузку. Попробуйте повторить операцию через пару минут")
             await state.clear()
             return
+            
     if result.get('status') == 'loading':
         await callback.message.edit_text("⏳ Модели на сервере подгружаются. Попробуйте еще раз через пару минут")
         await state.clear()
         return
+        
     predictions = result.get('predictions', [])
     
-    # Базовая шапка сообщения (сохраняем её отдельно в кэш, чтобы потом перерисовывать)
+    # Базовая шапка сообщения
     base_text = (
         f"🐦‍⬛ <b>Поиск по описанию</b>\n\n"
         f"📏 Размер: {SIZE_MAP[data['size']]}\n"
@@ -554,23 +557,24 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
     # Если птицы есть, собираем уникальный ключ для этого сообщения
     cache_key = f"{callback.message.chat.id}_{callback.message.message_id}"
     
-    # Сохраняем в кэш шапку и ВСЕХ найденных птиц (все 15 штук от бэкенда)
+    # Сохраняем в кэш шапку и ВСЕХ найденных птиц
     MORPH_CACHE[cache_key] = {
         "base_text": base_text,
         "predictions": predictions
     }
     
     # Формируем текст для первых 5 кандидатов
-    response_text = base_text + "🎯 <b>Возможные кандидаты (Режим отладки):</b>\n\n"
+    response_text = base_text + "🎯 <b>Возможные кандидаты:</b>\n\n"
     visible_predictions = predictions[:5]
     
     for i, pred in enumerate(visible_predictions):
         bird_html = make_bird_html_link(pred['name'])
+        # Переводим final_rank в проценты (например, 0.666 -> 67%)
         match_percentage = pred.get('final_rank', 0.0) * 100
         
         response_text += f"{i+1}. {bird_html} — <i>Совпадение {match_percentage:.0f}%</i>\n"
         
-    # Если птиц всего больше 5, прикрепляем кнопку. Передаем в неё ключ кэша и offset=5
+    # Если птиц всего больше 5, прикрепляем кнопку пагинации
     keyboard = None
     if len(predictions) > 5:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -578,8 +582,13 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
         ])
             
     # Обновляем сообщение первой порцией данных
-    await callback.message.edit_text(response_text, parse_mode="HTML", reply_markup=keyboard, link_preview_options=LinkPreviewOptions(is_disabled=True))
-    await state.clear() # Очищаем состояние опроса, оно больше не нужно
+    await callback.message.edit_text(
+        response_text, 
+        parse_mode="HTML", 
+        reply_markup=keyboard, 
+        link_preview_options=LinkPreviewOptions(is_disabled=True)
+    )
+    await state.clear()
 
 async def run_bot():
     await dp.start_polling(bot)
