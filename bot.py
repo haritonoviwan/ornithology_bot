@@ -248,41 +248,37 @@ async def handle_more_birds(callback: CallbackQuery):
     # Разбираем callback_data (формат: more_birds:cache_key:offset)
     _, cache_key, offset_str = callback.data.split(":")
     offset = int(offset_str)
-    
     # Достаем данные из кэша
     cached = MORPH_CACHE.get(cache_key)
     if not cached:
         await callback.answer("⚠️ Данные устарели или бот был перезапущен. Повторите поиск.", show_alert=True)
         return
-        
     predictions = cached["predictions"]
     base_text = cached["base_text"]
-    
     # Вычисляем, сколько птиц показать теперь (текущий offset + следующие 5)
     next_offset = offset + 5
     visible_predictions = predictions[:next_offset]
-    
-    response_text = base_text + "🎯 <b>Возможные кандидаты (Режим отладки):</b>\n\n"
-    
-    # Отрисовываем обновленный расширенный список
+    # Убрали упоминание "Режима отладки" из заголовка
+    response_text = base_text + "🎯 <b>Возможные кандидаты:</b>\n\n"
+    # Отрисовываем обновленный расширенный список в чистом формате
     for i, pred in enumerate(visible_predictions):
         bird_html = make_bird_html_link(pred['name'])
-        geo_score = pred.get('geo_score', 0.0)
-        morph_score = pred.get('morph_score', 0.0)
-        final_rank = pred.get('final_rank', 0.0)
-        
-        debug_info = f"<code>[G:{geo_score:.3f} * M:{morph_score:.2f} = {final_rank:.4f}]</code>"
-        response_text += f"{i+1}. {bird_html}\n└ {debug_info}\n\n"
-        
+        # Переводим final_rank в проценты точно так же, как в основном поиске
+        match_percentage = pred.get('final_rank', 0.0) * 100
+        response_text += f"{i+1}. {bird_html} — <i>Совпадение {match_percentage:.0f}%</i>\n"
     # Проверяем, остались ли еще скрытые птицы в запасе
     keyboard = None
     if len(predictions) > next_offset:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Ещё варианты 🔄", callback_data=f"more_birds:{cache_key}:{next_offset}")]
         ])
-        
-    # Редактируем сообщение: текст увеличится, а кнопка либо обновит offset, либо исчезнет
-    await callback.message.edit_text(response_text, parse_mode="HTML", reply_markup=keyboard, link_preview_options=LinkPreviewOptions(is_disabled=True))
+    # Редактируем сообщение: список красиво раскрывается вниз без лишнего мусора
+    await callback.message.edit_text(
+        response_text, 
+        parse_mode="HTML", 
+        reply_markup=keyboard, 
+        link_preview_options=LinkPreviewOptions(is_disabled=True)
+    )
     await callback.answer()
 
 @dp.message(F.voice | F.audio | F.document)
