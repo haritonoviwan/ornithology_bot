@@ -566,7 +566,7 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
     for i, pred in enumerate(visible_predictions):
         bird_html = make_bird_html_link(pred['name'])
         # Переводим final_rank в проценты (например, 0.666 -> 67%)
-       match_percentage = pred.get('morph_score', 0.0) * 100
+        match_percentage = pred.get('morph_score', 0.0) * 100
         
         response_text += f"{i+1}. {bird_html} — <i>Совпадение {match_percentage:.0f}%</i>\n"
         
