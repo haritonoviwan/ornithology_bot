@@ -214,10 +214,10 @@ async def process_audio_bytes(audio_bytes: bytes, filename: str, message: Messag
         bird_html = make_bird_html_link(bird_name)
         response_text += f"{i+1}. {bird_html} — {confidence:.1%}\n"
 
-    detailed_text = "⏳ <b>Подробный таймлайн:</b>\n\n"
+    detailed_text = "⏳ Подробный таймлайн:\n\n"
     for i, det in enumerate(detections):
         bird_html = make_bird_html_link(det['name'])
-        detailed_text += f"{i+1}. <b>{bird_html}</b> ({det['start']:.1f}с - {det['end']:.1f}с) — {det['confidence']:.1%}\n"
+        detailed_text += f"{i+1}. {bird_html} ({det['start']:.1f}с - {det['end']:.1f}с) — {det['confidence']:.1%}\n"
 
     cache_key = f"{message.chat.id}_{waiting_msg.message_id}"
     AUDIO_CACHE[cache_key] = detailed_text
@@ -380,7 +380,7 @@ async def start_morph_search(message: Message, state: FSMContext):
     await state.set_state(MorphSearchState.choosing_size)
     
     await message.answer(
-        "🪶 <b>Поиск по приметам</b>\n\n"
+        "🪶 Поиск по описанию\n\n"
         "Ответь на пару вопросов на основе своих наблюдений\n\n"
         "👉 <b>Шаг 1 из 3: Какого размера была птица?</b>",
         parse_mode="HTML",
@@ -394,8 +394,8 @@ async def handle_size_choice(callback: CallbackQuery, state: FSMContext):
     await state.update_data(size=size_num, colors=[]) # Инициализируем пустой список цветов
     await state.set_state(MorphSearchState.choosing_colors)
     text = (
-        f"🪶 <b>Поиск по приметам</b>\n\n"
-        f"📏 <b>Размер:</b> {SIZE_MAP[size_num]}\n\n"
+        f"🪶 Поиск по описанию\n\n"
+        f"📏 Размер: {SIZE_MAP[size_num]}\n\n"
         f"👉 <b>Шаг 2 из 3: Какого цвета она была преимущественно?</b>\n"
         f"<i>(Можно выбрать до 4 вариантов)</i>"
     )
@@ -439,9 +439,9 @@ async def handle_colors_done(callback: CallbackQuery, state: FSMContext):
     await state.set_state(MorphSearchState.choosing_habitat)
     
     text = (
-        f"🪶 <b>Поиск по приметам</b>\n\n"
-        f"📏 <b>Размер:</b> {SIZE_MAP[data['size']]}\n"
-        f"🎨 <b>Цвета:</b> {colors_ru}\n\n"
+        f"🪶 Поиск по описанию\n\n"
+        f"📏 Размер: {SIZE_MAP[data['size']]}\n"
+        f"🎨 Цвета: {colors_ru}\n\n"
         f"👉 <b>Шаг 3 из 3: Где была птица?</b>"
     )
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_habitat_keyboard())
@@ -456,10 +456,10 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
     geo = get_user_geo(callback.from_user.id)
     # Обновляем текст, показывая, что пошел поиск
     text_loading = (
-        f"🪶 <b>Поиск по приметам</b>\n\n"
-        f"📏 <b>Размер:</b> {SIZE_MAP[data['size']]}\n"
-        f"🎨 <b>Цвет:</b> {data['colors_ru_text']}\n"
-        f"🏡 <b>Место:</b> {HABITAT_MAP[habitat_key]}\n\n"
+        f"🪶 Поиск по описанию\n\n"
+        f"📏 Размер: {SIZE_MAP[data['size']]}\n"
+        f"🎨 Цвет: {data['colors_ru_text']}\n"
+        f"🏡 Место: {HABITAT_MAP[habitat_key]}\n\n"
         f"🔍 <i>Сверяюсь с орнитологической базой, секунду...</i>"
     )
     await callback.message.edit_text(text_loading, parse_mode="HTML", reply_markup=None)
@@ -492,7 +492,7 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
     predictions = result.get('predictions', [])
     # Формируем итоговый ответ
     response_text = (
-        f"🪶 <b>Поиск по приметам</b>\n\n"
+        f"🐦‍⬛ <b>Поиск по описанию</b>\n\n"
         f"📏 Размер: {SIZE_MAP[data['size']]}\n"
         f"🎨 Цвет: {data['colors_ru_text']}\n"
         f"🏡 Место: {HABITAT_MAP[habitat_key]}\n\n"
@@ -506,16 +506,7 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
             bird_html = make_bird_html_link(pred['name'])
             # Считаем процент совпадения примет
             match_percent = pred.get('morph_score', 1.0) * 100
-            # Определяем статус редкости по geo_score
-            geo_weight = pred.get('geo_score', 0.0)
-            if geo_weight > 0.1:
-                status = "🟢Часто"
-            elif geo_weight > 0.01:
-                status = "🟡Встречается"
-            else:
-                status = "🔴Редко"
-            # Красивая информативная строка
-            response_text += f"{i+1}. {bird_html} — Совпадение: <b>{match_percent:.0f}%</b> ({status})\n"
+            response_text += f"{i+1}. {bird_html} - Совпадение: {match_percent:.0f}%\n"
             
     # Обновляем то самое сообщение финальным результатом
     await callback.message.edit_text(response_text, parse_mode="HTML", link_preview_options=LinkPreviewOptions(is_disabled=True))
