@@ -566,12 +566,9 @@ async def handle_habitat_and_search(callback: CallbackQuery, state: FSMContext):
     
     for i, pred in enumerate(visible_predictions):
         bird_html = make_bird_html_link(pred['name'])
-        geo_score = pred.get('geo_score', 0.0)
-        morph_score = pred.get('morph_score', 0.0)
-        final_rank = pred.get('final_rank', 0.0)
+        match_percentage = pred.get('final_rank', 0.0) * 100
         
-        debug_info = f"<code>[G:{geo_score:.3f} * M:{morph_score:.2f} = {final_rank:.4f}]</code>"
-        response_text += f"{i+1}. {bird_html}\n└ {debug_info}\n\n"
+        response_text += f"{i+1}. {bird_html} — <i>Совпадение {match_percentage:.0f}%</i>\n"
         
     # Если птиц всего больше 5, прикрепляем кнопку. Передаем в неё ключ кэша и offset=5
     keyboard = None
